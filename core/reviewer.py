@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from core.logger import log
 from core.tag_preserver import TagPreserver
 from core.translator import ID_RE, parse_blocks
 
@@ -42,6 +43,8 @@ class Reviewer:
         out = {'chunk': record['chunk'], 'items': new_items, 'meta': record.get('meta', {})}
         self.ed_dir.mkdir(parents=True, exist_ok=True)
         (self.ed_dir / f"{record['chunk']:04d}.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
+        log.worker(f"Review chunk {record['chunk']} saved")
+        log.advance()
         return out
 
     async def review_all(self, scout_text='', resume=False):
@@ -50,6 +53,7 @@ class Reviewer:
         files = sorted(self.tr_dir.glob('*.json'))
         if not files:
             raise ValueError('No translated chunks found in work/tr')
+        log.set_phase('Review', len(files))
         semaphore = asyncio.Semaphore(self.jobs)
         async def run_one(path):
             record = json.loads(path.read_text(encoding='utf-8'))

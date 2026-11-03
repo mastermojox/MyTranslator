@@ -2,6 +2,7 @@ import asyncio
 import zipfile
 from pathlib import Path
 import tempfile
+from core.logger import PipelineLogger
 from main import parse_args, run_pipeline
 
 CONTAINER = "<?xml version='1.0'?><container version='1.0' xmlns='urn:oasis:names:tc:opendocument:xmlns:container'><rootfiles><rootfile full-path='OEBPS/content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>"
@@ -51,6 +52,18 @@ class FakeLLMClient:
             return '\n'.join(out)
         raise AssertionError('Unexpected system prompt')
 
+def test_logger():
+    lg = PipelineLogger(enabled=True)
+    lg.start()
+    lg.set_phase('Translate', 2)
+    lg.advance()
+    lg.api('test-model', 0.25, 'a' * 40, 'b' * 40)
+    lg.retry(1, 4, 1.0, 429)
+    lg.worker('Review chunk 1 saved')
+    lg.stop()
+    assert lg.total_tokens == 20
+    assert lg.phase == 'Translate'
+
 def test_cli_args():
     args = parse_args(['book.epub'])
     assert args.jobs == 4 and args.sample is None and args.resume is False
@@ -98,6 +111,7 @@ def test_sample_end_to_end():
         assert 'styles/translation.css' in opf
 
 if __name__ == '__main__':
+    test_logger()
     test_cli_args()
     test_sample_end_to_end()
     print('PASS: all end-to-end scenarios passed')

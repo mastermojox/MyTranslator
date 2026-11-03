@@ -21,40 +21,38 @@
 - core/scout.py - BookScouter collects only p/title roles, chunks 100000-150000 chars at paragraph boundaries, merge/dedupe, work/scout.md cache, interactive Enter pause, --auto-approve flag
 
 ## Step 4 - Translation engine, parallel reviewer, EPUB builder, CLI (2026-11-03)
+- Tests: PASS - python test_end_to_end.py
+- Commit: c387cb7 feat(pipeline): complete translation engine, parallel reviewer, epub builder, and CLI with sample mode
+- Pipeline: EpubHandler.extract -> StyleCensus -> BookScouter.scout -> Translator.translate (sequential) -> Reviewer.review_all (parallel, --jobs) -> EpubBuilder.build -> EpubHandler.repackage
+- Translator: block elements with role title, subtitle, p, verse or note only, skip excluded, inner XML masked with TagPreserver, chunks 300-500 estimated tokens without splitting an element, scout term substitution with [[TERM]] codes, rolling plot in work/state.json (plot_summary plus last 3 translated paragraphs), immediate save to work/tr/NNNN.json, --resume reuses tr/ed/state
+- Reviewer: asyncio Semaphore(jobs), MODEL_REVIEW, SOURCE plus DRAFT plus SCOUT, [idN] validation and proportional fallback, output to work/ed/NNNN.json
+- Builder: restore tags, spine page-progression-direction='rtl' in content.opf, styles/translation.css linked from XHTML and registered in OPF manifest, custom font copied to OEBPS/Fonts with @font-face and rem/em sizes, default mode uses only the Vazirmatn system stack with no embedded font, repackage with mimetype stored first
+- Prompts: prompts/translate.md (faithful voice, uncensored, preserve imperial units, [idN] and [[TERM]] codes, [[[P id]]] plus [[[META]]] plot/terms) and prompts/review.md (bilingual critic editor, removes translationese, never changes names, units or harsh language, returns only [[[P id]]] blocks)
+- Live mini test (separate run): real API sample pipeline on a small synthetic EPUB passed, with scout.md, structure.json, tr/ed/state files, valid output EPUB and Persian text, imperial units preserved and profanity not softened
+
+## Step 5 - Live logger and English console (2026-11-03)
 
 ### Status
-- Tests: PASS - python test_end_to_end.py printed PASS: all end-to-end scenarios passed
-- Git commit: being created at end of this step with message feat(pipeline): complete translation engine, parallel reviewer, epub builder, and CLI with sample mode
+- Tests: PASS - python -m pytest test_step1.py test_step2.py test_step3.py test_end_to_end.py -v, 10 passed in 2.46s
+- Git commit: being created at the end of this step with message feat(pipeline): complete end-to-end pipeline with live logger, sample mode, custom font injection, and CLI
+- Dependencies: rich>=13.7 added to requirements.txt, rich 14.3.4 installed from main PyPI (mirror removed earlier), httpx 0.28.1, pytest 8.3.5
 
-### Pipeline architecture
-- Flow: EpubHandler.extract -> StyleCensus.scan_styles + generate_structure -> BookScouter.scout (interactive pause unless --auto-approve) -> Translator.translate (sequential) -> Reviewer.review_all (parallel, --jobs) -> EpubBuilder.build -> EpubHandler.repackage.
-- Chunking (translator): translatable elements are block tags whose structure role is title, subtitle, p, verse or note (skip excluded); ancestors of another translatable element are skipped to avoid double translation. Inner XML of each element is masked with TagPreserver so the publisher outer tags/attributes are never sent or touched. Chunks accumulate whole elements up to 300-500 estimated tokens (whitespace word count), never splitting an element.
-- Term substitution: scout.md tables are parsed into (original, Persian) pairs; before sending, originals are replaced longest-first with [[TERM]] codes; after the model replies, codes are restored to the canonical Persian, so names cannot be distorted.
-- Rolling plot: work/state.json holds plot_summary, tail (last 3 translated paragraphs of the previous chunk) and completed_chunks; both are injected into the next chunk prompt. The [[[META]]] block of each reply (plot, terms) updates the state.
-- Crash resilience: each chunk is written immediately to work/tr/NNNN.json; reviewer output goes to work/ed/NNNN.json; --resume reuses existing tr/ed files and state instead of re-calling the API.
-- Reviewer: asyncio with a Semaphore(jobs); sends SOURCE + DRAFT + SCOUT to MODEL_REVIEW, validates [idN] placeholders and repairs missing ones with the proportional fallback.
-- Builder: maps edited items back by (file, index) using the same collection routine as the translator, restores tags, sets spine page-progression-direction=rtl in content.opf, writes OEBPS/styles/translation.css and links it from every translated XHTML, registers the CSS (and the font, when given) in the OPF manifest, then repackages with mimetype stored first.
-- Fonts: custom font is copied to OEBPS/Fonts, @font-face points to ../Fonts/<file>, relative size rules are added (h1 2rem, h2 1.5rem, p 1em, note/small 0.85em); with no font, only the system Vazirmatn stack CSS is injected and nothing is embedded.
-- Sample mode: --sample or --sample N or --chapter N restricts census, scout, translation and review to that single spine chapter (default first), compiles immediately and writes sample_translated.epub; the rest of the book is repackaged untranslated.
-
-### Modules and functions (Step 4)
-- prompts/translate.md - faithful voice, mandatory uncensored rule, preserve imperial units, preserve [idN] and [[TERM]] codes, exact response format [[[P id]]] blocks plus [[[META]]] plot/terms.
-- prompts/review.md - bilingual critic editor, receives SOURCE + DRAFT + SCOUT, removes translationese, never alters names, units or harsh language, returns only revised [[[P id]]] blocks.
-- core/translator.py - parse_and_collect, collect_items, parse_scout_terms, apply_terms, restore_terms, parse_blocks, parse_meta; Translator.make_chunks, Translator.translate (run alias); SequentialTranslator alias.
-- core/reviewer.py - Reviewer.review_chunk, Reviewer.review_all (run alias); ParallelReviewer alias; jobs semaphore, model from MODEL_REVIEW.
-- core/builder.py - EpubBuilder.load_records (ed preferred over tr), find_opf, build (build_epub alias), set_inner fragment replacement preserving element attributes.
-- main.py - load_env (tiny .env loader), parse_args (book_path, --font, --jobs default 4, --sample nargs ? const 1, --chapter, --resume, --auto-approve), async run_pipeline with injectable llm_client/review_client/work_dir/output_path for tests, main entry point.
-- test_end_to_end.py - FakeLLMClient dispatching on prompt type (structure, scout, translate, review), builds a 2-chapter EPUB, runs run_pipeline with sample=1, asserts tr/ed/state files, rebuilt EPUB validity, mimetype stored first, Persian terms restored, imperial unit kept as پنج مایل, inline <b> tag restored, skip paragraph untouched, chapter 2 untranslated, system CSS without @font-face, rtl spine in OPF; plus CLI argument tests.
+### Live logger architecture
+- core/logger.py - PipelineLogger using Rich Progress with SpinnerColumn, BarColumn, TaskProgressColumn, a Chunks counter in the form completed/total Chunks, and TimeRemainingColumn for ETA; global instances log and logger
+- Methods: start, stop, set_phase(name, total), advance, info, api, retry, worker, phase_done
+- Event stream above the progress bar: [INFO] for phase start/finish and saved files, [API] for model, latency in seconds and approximate tokens (prompt plus response chars divided by 4) with a running total, [RETRY] in yellow with attempt/max, HTTP status and backoff countdown in seconds, [WORKER] in magenta for parallel review chunks without breaking the terminal
+- Integration: LLMClient logs [API] on success and [RETRY] on 429/502/503/504 and network errors before each backoff sleep; Translator calls set_phase Translate and advances per saved or resume-skipped chunk; Reviewer calls set_phase Review and logs one [WORKER] line per saved chunk; Builder calls set_phase Build; main.py calls log.start, logs pipeline start and extraction, then phase_done Build, output ready and log.stop
+- English console: all logger lines, main.py lines and the Scout interactive pause are in English; the pause now reads Scout file created at work/scout.md. Please review/edit the names and equivalents, then press Enter to start translation...
 
 ### CLI usage
 - Full book: python main.py book.epub [--font path/to/font.woff2] [--jobs 4] [--resume]
 - Health check: python main.py book.epub --sample (or --sample 1 / --chapter 2) -> sample_translated.epub
-- Non-interactive: add --auto-approve to skip the scout.md review pause.
+- Non-interactive: add --auto-approve to skip the scout.md review pause
 
-### Bugs found (Step 4)
-- httpx was not installed in this environment: first test_end_to_end.py run failed with ModuleNotFoundError, and pip install -r requirements.txt timed out against mirror-pypi.runflare.com with no matching distribution found. Fix: core/llm_client.py now imports httpx optionally; when missing, AsyncClient is None and generate raises LLMClientError only on a real API call, so offline tests with FakeLLMClient pass. Real API use still requires httpx installed.
+### Bugs found (Step 5)
+- None; logger test asserts total_tokens calculation and phase tracking, and the sample end-to-end test still passes with logging enabled
 
 ### Next step
-- Await user instruction for the next phase, expected live run or hardening on a real EPUB. Do not start it before approval.
+- Await user instruction for the next phase, expected live run on a real EPUB. Do not start it before approval.
 
-Skipped: pytest run, direct execution was accepted alternative and passed; live LLM call, FakeLLMClient used because no live run was requested in this test; real-book run, synthetic 2-chapter EPUB used.
+Skipped: pytest was run this time (not skipped); live real-book run, synthetic EPUB only; long-book multi-wave scout merge still untested on a real book.

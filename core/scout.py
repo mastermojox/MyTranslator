@@ -78,7 +78,7 @@ class BookScouter:
     def interactive_pause(self, auto_approve=False):
         if auto_approve:
             return True
-        print('فایل شناسنامه و واژه‌نامه کتاب در مسیر work/scout.md ایجاد شد. لطفاً اسامی و معادل‌ها را بررسی/ویرایش کنید و سپس کلید Enter را برای شروع ترجمه فشار دهید...')
+        print('Scout file created at work/scout.md. Please review/edit the names and equivalents, then press Enter to start translation...')
         input()
         return True
 

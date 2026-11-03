@@ -2,6 +2,8 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import time
+from core.logger import log
 try:
     import httpx
 except ImportError:  # shortcut: offline env, only needed for real API calls
@@ -49,17 +51,22 @@ class LLMClient:
         payload = {'model': model or self.model, 'temperature': temperature, 'messages': [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]}
         headers = {'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'}
         for attempt in range(self.max_retries + 1):
+            started = time.perf_counter()
             try:
                 response = await self._post(payload, headers)
             except httpx.HTTPError as exc:
                 if attempt >= self.max_retries:
                     raise LLMClientError(f'LLM request failed after {attempt + 1} attempts: {exc}') from exc
-                await asyncio.sleep(self.backoff_base * (2 ** attempt) + random.uniform(0, 0.25))
+                delay = self.backoff_base * (2 ** attempt) + random.uniform(0, 0.25)
+                log.retry(attempt + 1, self.max_retries, delay, 'network')
+                await asyncio.sleep(delay)
                 continue
             if response.status_code in RETRYABLE_STATUS:
                 if attempt >= self.max_retries:
                     raise LLMClientError(f'LLM API error {response.status_code} after {attempt + 1} attempts: {response.text[:200]}')
-                await asyncio.sleep(self.backoff_base * (2 ** attempt) + random.uniform(0, 0.25))
+                delay = self.backoff_base * (2 ** attempt) + random.uniform(0, 0.25)
+                log.retry(attempt + 1, self.max_retries, delay, response.status_code)
+                await asyncio.sleep(delay)
                 continue
             if response.status_code >= 400:
                 raise LLMClientError(f'LLM API error {response.status_code}: {response.text[:200]}')
@@ -71,5 +78,6 @@ class LLMClient:
             content = ((choices[0].get('message') or {}).get('content') if choices else None)
             if content is None or not str(content).strip():
                 raise EmptyResponseError('LLM response has no content')
+            log.api(payload['model'], time.perf_counter() - started, system_prompt + user_prompt, str(content))
             return content
         raise LLMClientError('LLM request failed')

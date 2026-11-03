@@ -3,6 +3,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from core.logger import log
 from core.tag_preserver import TagPreserver
 
 TEXT_TAGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div', 'li'}
@@ -150,10 +151,13 @@ class Translator:
         if resume and self.state_path.exists():
             state = json.loads(self.state_path.read_text(encoding='utf-8'))
         results = []
+        log.set_phase('Translate', len(chunks))
         for num, chunk in enumerate(chunks, 1):
             out_path = self.tr_dir / f'{num:04d}.json'
             if resume and out_path.exists():
                 results.append(json.loads(out_path.read_text(encoding='utf-8')))
+                log.advance()
+                log.info(f'Translate chunk skipped (resume): {out_path}')
                 continue
             lines = [f'[[[P {j}]]] ' + apply_terms(item['masked'], terms) for j, item in enumerate(chunk)]
             user = 'PLOT SO FAR:\n' + state.get('plot_summary', '') + '\n\nPREVIOUS TAIL:\n' + '\n'.join(state.get('tail', [])) + '\n\nSCOUT:\n' + scout_text + '\n\nTRANSLATE:\n' + '\n'.join(lines)
@@ -175,6 +179,8 @@ class Translator:
                 new_items.append(copied)
             record = {'chunk': num, 'items': new_items, 'meta': meta}
             out_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
+            log.advance()
+            log.info(f'Translate chunk saved: {out_path}')
             if meta.get('plot'):
                 state['plot_summary'] = meta['plot']
             state['tail'] = [it['translated_masked'] for it in new_items[-3:]]

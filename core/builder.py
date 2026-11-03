@@ -3,6 +3,7 @@ import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from core.css_injector import CSSInjector
+from core.logger import log
 from core.epub_handler import EpubHandler
 from core.tag_preserver import TagPreserver
 from core.translator import parse_and_collect
@@ -122,7 +123,10 @@ class EpubBuilder:
         otree.write(opf_path, encoding='utf-8', xml_declaration=True)
         out_handler = handler or EpubHandler(self.raw_dir / 'book.epub', work_dir=self.work_dir)
         out_handler.raw_dir = self.raw_dir
+        log.set_phase('Build', 1)
         out_handler.repackage(output_path, source_dir=self.raw_dir)
+        log.advance()
+        log.info(f'EPUB built: {output_path}')
         return Path(output_path)
 
     build_epub = build

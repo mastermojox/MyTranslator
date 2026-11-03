@@ -8,6 +8,7 @@ from core.llm_client import LLMClient
 from core.reviewer import Reviewer
 from core.scout import BookScouter
 from core.style_census import StyleCensus
+from core.logger import log
 from core.translator import Translator
 
 def load_env(path='.env'):
@@ -37,8 +38,12 @@ async def run_pipeline(book_path, font=None, jobs=4, sample=None, chapter=None, 
     work = Path(work_dir)
     translate_client = llm_client or LLMClient()
     edit_client = review_client or llm_client or LLMClient()
+    log.start()
+    log.info(f'Starting pipeline for {book_path}')
+    log.set_phase('Scout', 1)
     handler = EpubHandler(book_path, work_dir=work)
     handler.extract()
+    log.info(f'EPUB extracted to {work}')
     spine = handler.get_spine_xhtml()
     if selected is not None:
         if selected < 1 or selected > len(spine):
@@ -54,6 +59,9 @@ async def run_pipeline(book_path, font=None, jobs=4, sample=None, chapter=None, 
     await Reviewer(llm_client=edit_client, work_dir=work, jobs=jobs).review_all(scout_text, resume=resume)
     out = Path(output_path) if output_path else (Path('sample_translated.epub') if selected is not None else Path(Path(book_path).stem + '_translated.epub'))
     EpubBuilder(work_dir=work).build(out, font_path=font, xhtml_files=files, handler=handler)
+    log.phase_done('Build')
+    log.info(f'Output ready: {out}')
+    log.stop()
     return out
 
 def main(argv=None):
