@@ -39,6 +39,14 @@ class BookScouter:
                     if role in TEXT_ROLES:
                         paragraphs.append(text)
                         break
+        if not paragraphs:
+            # shortcut: fallback when structure roles match nothing, use raw body tags
+            for file_path in xhtml_files:
+                for el in ET.parse(file_path).getroot().iter():
+                    if _local(el.tag) in {'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
+                        text = ' '.join(''.join(el.itertext()).split())
+                        if text:
+                            paragraphs.append(text)
         return paragraphs
 
     def chunk_paragraphs(self, paragraphs, max_chars=None):

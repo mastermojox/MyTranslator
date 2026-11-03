@@ -6,6 +6,7 @@ from pathlib import Path
 
 TEXT_TAGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div', 'li'}
 VALID_ROLES = {'title', 'subtitle', 'p', 'verse', 'note', 'skip'}
+ROLE_ALIASES = {'paragraph': 'p', 'body': 'p', 'text': 'p', 'normal': 'p', 'content': 'p', 'para': 'p', 'heading': 'title', 'header': 'title', 'booktitle': 'title'}
 
 def _local(tag):
     return tag.rsplit('}', 1)[-1].lower()
@@ -57,6 +58,7 @@ class StyleCensus:
             if '=' not in line:
                 raise ValueError(f'Invalid structure line: {line}')
             left, role = [part.strip() for part in line.rsplit('=', 1)]
+            role = ROLE_ALIASES.get(role.lower(), role.lower())
             if role not in VALID_ROLES:
                 raise ValueError(f'Invalid role: {role}')
             if '.' in left:
