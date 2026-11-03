@@ -2,7 +2,13 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-import httpx
+try:
+    import httpx
+except ImportError:  # shortcut: offline env, only needed for real API calls
+    import types
+    class _HTTPError(Exception):
+        pass
+    httpx = types.SimpleNamespace(HTTPError=_HTTPError, AsyncClient=None)
 
 RETRYABLE_STATUS = {429, 502, 503, 504}
 DEFAULT_BASE_URL = 'https://positionapi.top/v1'
@@ -32,6 +38,8 @@ class LLMClient:
     async def _post(self, payload, headers):
         if self._client is not None:
             return await self._client.post(self.endpoint, json=payload, headers=headers)
+        if httpx.AsyncClient is None:
+            raise LLMClientError('httpx is not installed')
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.post(self.endpoint, json=payload, headers=headers)
 
