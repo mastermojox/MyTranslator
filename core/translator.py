@@ -8,8 +8,17 @@ from core.tag_preserver import TagPreserver
 
 TEXT_TAGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div', 'li'}
 TEXT_ROLES = {'title', 'subtitle', 'p', 'verse', 'note'}
-P_RE = re.compile(r'\[\[\[P\s+(\d+)\]\]\]')
+P_RE = re.compile(r'\[{1,3}\s*P\s*(\d+)\s*\]{1,3}')
+META_RE = re.compile(r'\[{1,3}\s*META\s*\]{1,3}')
 ID_RE = re.compile(r'\[id\d+\]')
+
+def strip_code_fences(text):
+    cleaned = str(text).strip()
+    cleaned = re.sub(r'^```[a-zA-Z]*\s*\n?', '', cleaned)
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+    cleaned = cleaned.replace('```markdown', '').replace('```', '')
+    return cleaned.strip()
+
 
 def _local(tag):
     return tag.rsplit('}', 1)[-1].lower()
@@ -28,7 +37,14 @@ def role_for(el, structure):
         key = f'{tag}.{cls}' if cls else tag
         if key in structure:
             return structure[key]
-    return structure.get(tag)
+    role = structure.get(tag)
+    if role is not None:
+        return role
+    if tag in {'h1', 'h2', 'h3'}:
+        return 'title'
+    if tag in {'p', 'div', 'li'}:
+        return 'p'
+    return None
 
 def parse_and_collect(xhtml_file, structure):
     root = ET.parse(xhtml_file).getroot()
@@ -85,23 +101,41 @@ def restore_terms(text, terms):
     return out
 
 def parse_blocks(text):
+    cleaned = strip_code_fences(text)
     blocks = {}
-    matches = list(P_RE.finditer(text))
+    matches = list(P_RE.finditer(cleaned))
     for k, m in enumerate(matches):
         if k + 1 < len(matches):
             end = matches[k + 1].start()
         else:
-            end = text.find('[[[META]]]', m.end())
-            if end < 0:
-                end = len(text)
-        blocks[int(m.group(1))] = text[m.end():end].strip()
+            meta_match = META_RE.search(cleaned, m.end())
+            end = meta_match.start() if meta_match else len(cleaned)
+        blocks[int(m.group(1))] = cleaned[m.end():end].strip()
     return blocks
+
+def map_plain_paragraphs(text, expected_count):
+    cleaned = strip_code_fences(text)
+    meta_match = META_RE.search(cleaned)
+    if meta_match:
+        cleaned = cleaned[:meta_match.start()]
+    parts = [p.strip() for p in re.split(r'\n\s*\n', cleaned) if p.strip()]
+    if len(parts) != expected_count:
+        lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        lines = [re.sub(r'^\d+[\.\)]\s*', '', ln) for ln in lines]
+        if len(lines) == expected_count:
+            parts = lines
+        else:
+            return {}
+    return {i: parts[i] for i in range(expected_count)}
+
 
 def parse_meta(text):
     meta = {'plot': '', 'terms': []}
-    if '[[[META]]]' not in text:
+    cleaned = strip_code_fences(text)
+    meta_match = META_RE.search(cleaned)
+    if not meta_match:
         return meta
-    for line in text.split('[[[META]]]', 1)[1].splitlines():
+    for line in cleaned[meta_match.end():].splitlines():
         s = line.strip()
         if s.lower().startswith('plot:') or s.lower().startswith('summary:'):
             meta['plot'] = s.split(':', 1)[1].strip()
@@ -164,6 +198,14 @@ class Translator:
             raw = await self.llm_client.generate(self.load_prompt(), user, temperature=0.3, model=self.model)
             blocks = parse_blocks(raw)
             meta = parse_meta(raw)
+            if not blocks:
+                log.retry(1, 1, 0, 'format')
+                retry_user = user + '\n\nFORMAT FIX: Your previous reply had no valid block tags. Reply again with EXACT syntax [[[P 0]]], [[[P 1]]] etc., one block per paragraph, no code fences, no extra text, then [[[META]]].'
+                raw = await self.llm_client.generate(self.load_prompt(), retry_user, temperature=0.1, model=self.model)
+                blocks = parse_blocks(raw)
+                meta = parse_meta(raw)
+            if not blocks:
+                blocks = map_plain_paragraphs(raw, len(chunk))
             if not blocks:
                 raise ValueError('Translator response has no [[[P id]]] blocks')
             new_items = []

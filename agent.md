@@ -48,3 +48,10 @@
 - Rerun the pipeline on the affected book from scratch (work was deleted) and verify scout.md is generated; if it still fails, inspect the regenerated work/structure.json.
 
 Skipped: live rerun on the affected real book, it was not provided in this session; only the full offline test suite was rerun.
+
+## Bugfix - Reviewer robust parsing and draft fallback (2026-11-04)
+- Root cause: Reviewer still used the strict translator parser and crashed with Reviewer response has no [[[P id]]] blocks on chunk 4, after chunks 1-3 were saved.
+- core/reviewer.py: markdown code fences stripped; tag regex generalized to triple/double/single brackets and bare **P n**: / #P n: forms incl. fullwidth colon, with re.IGNORECASE, reusing the flexible parse_blocks from core.translator.
+- Line fallback: untagged line/paragraph output is mapped in order when its count matches the expected blocks, like the translator fallback.
+- Safe draft fallback: if parsing still fails completely, the reviewer logs [WARN] Review parse failed for chunk X; falling back to draft translation and saves the draft translated_masked from work/tr as the chunk output in work/ed instead of crashing, so the pipeline never stops.
+- Tests: PASS - python -m pytest test_step1.py test_step2.py test_step3.py test_end_to_end.py -v, 10 passed.

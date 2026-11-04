@@ -5,6 +5,43 @@ from pathlib import Path
 from core.logger import log
 from core.tag_preserver import TagPreserver
 from core.translator import ID_RE, parse_blocks
+import re
+
+_REVIEW_P_RE = re.compile(r'\[\[\[\s*P\s*(\d+)\s*\]\]\]|\[\[\s*P\s*(\d+)\s*\]\]|\[\s*P\s*(\d+)\s*\]|(?:\*\*|#)?\s*P\s*(\d+)\s*[:：]', re.IGNORECASE)
+
+def _strip_code_fences(text):
+    return str(text).replace('```markdown', '').replace('```', '').strip()
+
+def _parse_review_blocks(text):
+    blocks = parse_blocks(_strip_code_fences(text))
+    if blocks:
+        return blocks
+    cleaned = _strip_code_fences(text)
+    matches = list(_REVIEW_P_RE.finditer(cleaned))
+    out = {}
+    for k, m in enumerate(matches):
+        pid = int(next(g for g in m.groups() if g is not None))
+        end = matches[k + 1].start() if k + 1 < len(matches) else len(cleaned)
+        content = cleaned[m.end():end].strip()
+        if content:
+            out[pid] = content
+    return out
+
+def _map_review_lines(text, expected_count):
+    cleaned = _strip_code_fences(text)
+    parts = [p.strip() for p in re.split(r'\n\s*\n', cleaned) if p.strip()]
+    if len(parts) != expected_count:
+        lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        lines = [re.sub(r'^\d+[\.\)]\s*', '', ln) for ln in lines]
+        parts = lines if len(lines) == expected_count else []
+    return {i: parts[i] for i in range(expected_count)} if len(parts) == expected_count else {}
+
+def _warn_review_fallback(chunk_num):
+    msg = f'Review parse failed for chunk {chunk_num}; falling back to draft translation'
+    try:
+        log._print(f'[yellow][WARN][/yellow] {msg}')
+    except Exception:
+        print(f'[WARN] {msg}')
 
 class Reviewer:
     def __init__(self, llm_client=None, work_dir='work', jobs=4, model=None, prompt_path='prompts/review.md'):
@@ -27,9 +64,12 @@ class Reviewer:
         draft = '\n'.join(f'[[[P {j}]]] ' + it['translated_masked'] for j, it in enumerate(items))
         user = 'SOURCE:\n' + src + '\n\nDRAFT:\n' + draft + '\n\nSCOUT:\n' + scout_text
         raw = await self.llm_client.generate(self.load_prompt(), user, temperature=0.2, model=self.model)
-        blocks = parse_blocks(raw)
+        blocks = _parse_review_blocks(raw)
         if not blocks:
-            raise ValueError('Reviewer response has no [[[P id]]] blocks')
+            blocks = _map_review_lines(raw, len(items))
+        if not blocks:
+            _warn_review_fallback(record['chunk'])
+            blocks = {}
         new_items = []
         for j, item in enumerate(items):
             reviewed = blocks.get(j, item['translated_masked'])
