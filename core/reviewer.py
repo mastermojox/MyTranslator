@@ -1,31 +1,48 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from core.logger import log
 from core.tag_preserver import TagPreserver
 from core.translator import ID_RE, parse_blocks
-import re
 
-_REVIEW_P_RE = re.compile(r'\[\[\[\s*P\s*(\d+)\s*\]\]\]|\[\[\s*P\s*(\d+)\s*\]\]|\[\s*P\s*(\d+)\s*\]|(?:\*\*|#)?\s*P\s*(\d+)\s*[:：]', re.IGNORECASE)
+_MARKER_RE = re.compile(r'\[\[\[\s*(THINK|P)\s*(\d+)\s*\]\]\]|\[\[\s*(THINK|P)\s*(\d+)\s*\]\]|\[\s*(THINK|P)\s*(\d+)\s*\]|(?:\*\*|#)?\s*(THINK|P)\s*(\d+)\s*[:：]', re.IGNORECASE)
+_REVIEW_P_RE = _MARKER_RE
 
 def _strip_code_fences(text):
     return str(text).replace('```markdown', '').replace('```', '').strip()
 
-def _parse_review_blocks(text):
-    blocks = parse_blocks(_strip_code_fences(text))
-    if blocks:
-        return blocks
+def _marker_info(match):
+    groups = match.groups()
+    for i in range(0, len(groups), 2):
+        if groups[i] is not None:
+            return groups[i].upper(), int(groups[i + 1])
+    return None, None
+
+def _parse_review_output(text):
     cleaned = _strip_code_fences(text)
-    matches = list(_REVIEW_P_RE.finditer(cleaned))
-    out = {}
+    matches = list(_MARKER_RE.finditer(cleaned))
+    blocks = {}
+    notes = {}
     for k, m in enumerate(matches):
-        pid = int(next(g for g in m.groups() if g is not None))
+        kind, pid = _marker_info(m)
+        if kind is None:
+            continue
         end = matches[k + 1].start() if k + 1 < len(matches) else len(cleaned)
         content = cleaned[m.end():end].strip()
-        if content:
-            out[pid] = content
-    return out
+        if not content:
+            continue
+        if kind == 'THINK':
+            notes[pid] = content
+        elif kind == 'P':
+            blocks[pid] = content
+    if not blocks:
+        blocks = parse_blocks(cleaned)
+    return blocks, notes
+
+def _parse_review_blocks(text):
+    return _parse_review_output(text)[0]
 
 def _map_review_lines(text, expected_count):
     cleaned = _strip_code_fences(text)
@@ -56,7 +73,7 @@ class Reviewer:
     def load_prompt(self):
         if self.prompt_path.exists():
             return self.prompt_path.read_text(encoding='utf-8')
-        return 'Revise the Persian draft against the English source. Preserve [idN] placeholders. Return only [[[P id]]] blocks.'
+        return 'Revise the Persian draft against the English source. For each paragraph output [[[THINK id]]] analysis first, then the final [[[P id]]] block. Preserve [idN] placeholders.'
 
     async def review_chunk(self, record, scout_text=''):
         items = record['items']
@@ -64,7 +81,7 @@ class Reviewer:
         draft = '\n'.join(f'[[[P {j}]]] ' + it['translated_masked'] for j, it in enumerate(items))
         user = 'SOURCE:\n' + src + '\n\nDRAFT:\n' + draft + '\n\nSCOUT:\n' + scout_text
         raw = await self.llm_client.generate(self.load_prompt(), user, temperature=0.2, model=self.model)
-        blocks = _parse_review_blocks(raw)
+        blocks, notes = _parse_review_output(raw)
         if not blocks:
             blocks = _map_review_lines(raw, len(items))
         if not blocks:
@@ -79,6 +96,8 @@ class Reviewer:
             copied = dict(item)
             copied['reviewed_masked'] = reviewed
             copied['translated_masked'] = reviewed
+            if j in notes:
+                copied['notes'] = notes[j]
             new_items.append(copied)
         out = {'chunk': record['chunk'], 'items': new_items, 'meta': record.get('meta', {})}
         self.ed_dir.mkdir(parents=True, exist_ok=True)

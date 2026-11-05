@@ -1,4 +1,12 @@
 .env
+.env.*
+!.env.example
 __pycache__/
+*.py[cod]
 .pytest_cache/
-*.pyc
+venv/
+.venv/
+env/
+*.epub
+/work/
+/live_test_run/

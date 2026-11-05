@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from core.builder import EpubBuilder
 from core.epub_handler import EpubHandler
@@ -45,14 +46,21 @@ async def run_pipeline(book_path, font=None, jobs=4, sample=None, chapter=None, 
     handler.extract()
     log.info(f'EPUB extracted to {work}')
     spine = handler.get_spine_xhtml()
+    def _words(path):
+        try:
+            return sum(len(''.join(e.itertext()).split()) for e in ET.parse(path).getroot().iter() if e.tag.rsplit('}', 1)[-1].lower() in {'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li'})
+        except Exception:
+            return 0
     if selected is not None:
-        if selected < 1 or selected > len(spine):
-            raise ValueError(f'Chapter {selected} out of range (book has {len(spine)} chapters)')
-        files = [spine[selected - 1]]
+        content = [f for f in spine if _words(f) >= 200] or spine
+        if selected < 1 or selected > len(content):
+            raise ValueError(f'Chapter {selected} out of range (book has {len(content)} content chapters)')
+        files = [content[selected - 1]]
+        log.info(f'Sample mode: content chapter {selected} is {files[0]}')
     else:
         files = spine
     census = StyleCensus()
-    census.scan_styles(files)
+    census.scan_styles(spine)
     structure = await census.generate_structure(translate_client, work)
     scout_text = await BookScouter(llm_client=translate_client, work_dir=work).scout(files, auto_approve=auto_approve)
     await Translator(llm_client=translate_client, work_dir=work).translate(files, structure, scout_text, resume=resume)
